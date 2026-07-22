@@ -26,67 +26,62 @@ async function dig() {
     } else {
         try {
             await bot.dig(block, "ignore", "raycast");
-        } catch (err) {
-            // Ignore minor digging interrupts
-        }
+        } catch (err) {}
     }
     
     await sleep(100);
     if (isDigging) dig();
 }
 
-// Fixed continuous placement loop (simulates Right-Click key)
+// ---------------------------------------------------------
+// NEW & IMPROVED PLACING LOGIC
+// ---------------------------------------------------------
 async function place() {
     if (!isPlacing) return;
 
     try {
-        // Format input (e.g. "dark oak sapling" -> "dark_oak_sapling")
-        const formattedTarget = placingItemName.toLowerCase().trim().replace(/\s+/g, "_");
+        const formattedTarget = placingItemName.toLowerCase().replace(/\s+/g, "_");
 
-        // 1. Find item in inventory
-        const item = bot.inventory.items().find((i) => {
-            const name = i.name.toLowerCase();
-            return name.includes(formattedTarget) || formattedTarget.includes(name);
-        });
+        // 1. Find item
+        const item = bot.inventory.items().find((i) => i.name.toLowerCase().includes(formattedTarget));
 
         if (!item) {
-            bot.chat(`I ran out of ${placingItemName}! Stopping.`);
-            console.log(`[Bot] Out of item: ${placingItemName}`);
+            bot.chat(`I don't have ${placingItemName} anymore! Stopping.`);
             isPlacing = false;
             return;
         }
 
-        // 2. Equip item to main hand if not already holding it
-        if (!bot.heldItem || bot.heldItem.type !== item.type) {
+        // 2. Equip item safely
+        if (!bot.heldItem || bot.heldItem.name !== item.name) {
             await bot.equip(item, "hand");
-            await sleep(200); // Give server a moment to register item equip
+            await sleep(250); // Mandatory wait for server to register equip
         }
 
-        // 3. Find target block the bot is looking at (up to 4 blocks away)
+        // 3. Find block in front of the bot
         const targetBlock = bot.blockAtCursor(4);
 
-        if (targetBlock && targetBlock.type !== 0) {
-            // Right-click the targeted block with held item (places block / plants sapling)
-            try {
-                await bot.activateBlock(targetBlock);
-            } catch (e) {
-                // Fallback to placeBlock if activateBlock encounters an edge case
-                await bot.placeBlock(targetBlock, vec3(0, 1, 0));
-            }
-        } else {
-            // If looking at air, attempt to activate the item in hand
-            await bot.activateItem();
+        if (targetBlock && targetBlock.name !== "air") {
+            
+            // 4. Force the bot to look directly at the center of the block to satisfy server Anti-Cheat
+            const centerPosition = targetBlock.position.offset(0.5, 0.5, 0.5);
+            await bot.lookAt(centerPosition, true);
+            await sleep(50); // Tiny pause to let the head turn
+
+            // 5. Place the block on the TOP face (vec3 0,1,0) of the target block
+            // This means if you look at a dirt block, it plants the sapling ON TOP of it.
+            await bot.placeBlock(targetBlock, new vec3(0, 1, 0));
+            
+            // 6. Swing arm to make it look like a real player clicking
+            bot.swingArm('right');
         }
 
     } catch (err) {
-        // Print errors to terminal console for debugging
-        if (err.message && !err.message.includes("Cancelled")) {
-            console.log(`[Place Error]: ${err.message}`);
-        }
+        // If it fails, print the exact reason to your terminal!
+        console.log(`[Placing Block Failed]: ${err.message}`);
     }
 
-    // Delay between placements (250ms prevents server anti-cheat/spam kicks)
-    await sleep(250);
+    // Wait half a second between placements so the server doesn't kick for spamming
+    await sleep(500);
 
     if (isPlacing) place();
 }
@@ -104,7 +99,9 @@ function equipItem(itemName) {
     }
 }
 
-bot.on("messagestr", (message) => console.log(message));
+bot.on("spawn", () => {
+    console.log(`Bot has spawned in the server! Type commands in chat.`);
+});
 
 bot.on("chat", async (username, message) => {
     if (username === bot.username) return;
