@@ -8,17 +8,17 @@ var isDigging = false;
 var isPlacing = false;
 var placingItemName = "";
 
-// Offline / Unverified Bot Configuration
 const bot = mineflayer.createBot({
     host: "Shifineyy.aternos.me",
     port: 46856,
-    username: "consistentMiner", // You can change this to any custom bot name
+    username: "consistentMiner",
     skipValidation: true
 });
 
 // Recursive loop for digging
 async function dig() {
     if (!isDigging) return;
+
     const block = bot.blockAtCursor(4);
 
     if (!block) {
@@ -27,54 +27,71 @@ async function dig() {
         try {
             await bot.dig(block, "ignore", "raycast");
         } catch (err) {
-            await sleep(100);
+            // Ignore minor digging interruptions
         }
     }
     
-    dig();
+    await sleep(100);
+    if (isDigging) dig();
 }
 
-// Recursive loop for placing blocks/saplings
+// Fixed recursive loop for placing blocks/saplings
 async function place() {
     if (!isPlacing) return;
-    
-    const block = bot.blockAtCursor(4);
 
-    if (!block) {
-        await sleep(100);
-    } else {
-        try {
-            // Find item in inventory
-            const item = bot.inventory.items().find((i) => i.name.toLowerCase().includes(placingItemName));
-            
-            if (!item) {
-                bot.chat(`Out of ${placingItemName}! Stopping placement.`);
-                isPlacing = false;
-                return;
-            }
+    try {
+        // Format input name for Minecraft internal IDs (e.g. "dark oak sapling" -> "dark_oak_sapling")
+        const formattedTarget = placingItemName.toLowerCase().replace(/\s+/g, "_");
 
-            // Equip item to main hand
+        // 1. Find the item in the inventory
+        const item = bot.inventory.items().find((i) => {
+            const itemName = i.name.toLowerCase();
+            return itemName.includes(formattedTarget) || formattedTarget.includes(itemName);
+        });
+
+        if (!item) {
+            bot.chat(`I don't have any ${placingItemName} in my inventory! Stopping.`);
+            console.log(`[Bot] Out of item: ${placingItemName}`);
+            isPlacing = false;
+            return;
+        }
+
+        // 2. Equip only if not already held in hand
+        if (!bot.heldItem || bot.heldItem.type !== item.type) {
             await bot.equip(item, "hand");
+            await sleep(150); // Small pause for equipment sync
+        }
 
-            // Place on top face of target block (vec3(0, 1, 0))
-            await bot.placeBlock(block, vec3(0, 1, 0));
-        } catch (err) {
-            await sleep(100);
+        // 3. Find target block at cursor
+        const targetBlock = bot.blockAtCursor(4);
+
+        if (targetBlock && targetBlock.type !== 0) { // Ensure target block exists and isn't air
+            // Place against top face of the block (0, 1, 0)
+            await bot.placeBlock(targetBlock, vec3(0, 1, 0));
+        }
+    } catch (err) {
+        // Log placement errors to terminal to help debug positioning issues
+        if (err.message && !err.message.includes("Cancelled")) {
+            console.log(`[Placement Error]: ${err.message}`);
         }
     }
-    
-    place();
+
+    // Pause between placement attempts to prevent server spam
+    await sleep(250);
+
+    if (isPlacing) place();
 }
 
-function equip(itemName) {
-    const item = bot.inventory.items().filter((item) => item.name.toLowerCase().includes(itemName.toLowerCase()))[0];
+function equipItem(itemName) {
+    const formatted = itemName.toLowerCase().replace(/\s+/g, "_");
+    const item = bot.inventory.items().find((i) => i.name.toLowerCase().includes(formatted));
+
     if (item) {
-        bot.equip(item, "hand");
-        bot.chat(`I equipped a ${itemName}!`);
-        return true;
+        bot.equip(item, "hand")
+            .then(() => bot.chat(`Equipped ${item.name}!`))
+            .catch((err) => console.log(`Equip error: ${err.message}`));
     } else {
-        bot.chat(`I don't have a ${itemName}!`);
-        return false;
+        bot.chat(`I don't have ${itemName} in my inventory!`);
     }
 }
 
@@ -113,8 +130,7 @@ bot.on("chat", async (username, message) => {
             return;
         }
 
-        placingItemName = fullInput.replace(/\s+/g, "_");
-
+        placingItemName = fullInput;
         bot.chat(`Started placing ${placingItemName}!`);
         isPlacing = true;
         place();
@@ -125,11 +141,10 @@ bot.on("chat", async (username, message) => {
             return;
         }
 
-        equip(args.join(" "));
-    } else {
-        bot.chat("I don't understand you!");
+        equipItem(args.join(" "));
     }
 });
 
 bot.on("kicked", console.log);
 bot.on("error", console.log);
+
