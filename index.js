@@ -9,8 +9,8 @@ var isPlacing = false;
 var placingItemName = "";
 
 const bot = mineflayer.createBot({
-    host: "Obsidian7_smp.aternos.me",
-    port: 11400,
+    host: "Shifineyy.aternos.me",
+    port: 46856,
     username: "consistentMiner",
     // auth: "microsoft", // Uncomment if logging into an online-mode / Microsoft account
     skipValidation: true,
