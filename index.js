@@ -23,13 +23,33 @@ const bot = mineflayer.createBot({
 bot.loadPlugin(pathfinder);
 
 let defaultMovements;
+let mcData;
 let isChopping = false;
 let isClearing = false;
 let isGuarding = false;
+let isContinuousPlacing = false;
+let isFishing = false;
 
 bot.once("spawn", () => {
     console.log(`[Bot Online] Connected as ${bot.username}!`);
-    defaultMovements = new Movements(bot);
+    
+    mcData = require("minecraft-data")(bot.version);
+    defaultMovements = new Movements(bot, mcData);
+
+    defaultMovements.canDig = true;
+    defaultMovements.allowParkour = true;
+    defaultMovements.allowSprinting = true;
+
+    const scaffoldBlockNames = [
+        "dirt", "cobblestone", "stone", "oak_planks", "spruce_planks", 
+        "birch_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", 
+        "cobbled_deepslate", "netherrack"
+    ];
+    
+    defaultMovements.scafoldingBlocks = scaffoldBlockNames
+        .map(name => mcData.blocksByName[name]?.id)
+        .filter(id => id !== undefined);
+
     bot.pathfinder.setMovements(defaultMovements);
 });
 
@@ -39,8 +59,47 @@ function getPlayer(username) {
 }
 
 // ---------------------------------------------------------
-// 2. AUTO-EAT SYSTEM
+// 2. AUTO WEAPON, ARMOR & EAT SYSTEM
 // ---------------------------------------------------------
+async function equipBestEquipment() {
+    const items = bot.inventory.items();
+
+    const weaponPriority = [
+        "netherite_sword", "diamond_sword", "iron_sword", "golden_sword", "stone_sword", "wooden_sword",
+        "netherite_axe", "diamond_axe", "iron_axe", "golden_axe", "stone_axe", "wooden_axe"
+    ];
+
+    for (const name of weaponPriority) {
+        const weapon = items.find(i => i.name === name);
+        if (weapon) {
+            try {
+                await bot.equip(weapon, "hand");
+                break;
+            } catch (err) {}
+        }
+    }
+
+    const armorSlots = {
+        helmet: ["netherite_helmet", "diamond_helmet", "iron_helmet", "golden_helmet", "leather_helmet"],
+        chestplate: ["netherite_chestplate", "diamond_chestplate", "iron_chestplate", "golden_chestplate", "leather_chestplate"],
+        leggings: ["netherite_leggings", "diamond_leggings", "iron_leggings", "golden_leggings", "leather_leggings"],
+        boots: ["netherite_boots", "diamond_boots", "iron_boots", "golden_boots", "leather_boots"]
+    };
+
+    for (const [slot, priority] of Object.entries(armorSlots)) {
+        for (const name of priority) {
+            const armor = items.find(i => i.name === name);
+            if (armor) {
+                try {
+                    await bot.equip(armor, slot);
+                    break;
+                } catch (err) {}
+            }
+        }
+    }
+}
+
+// Auto-Eat Monitor
 const foodNames = ["cooked_beef", "cooked_porkchop", "cooked_chicken", "bread", "apple", "golden_apple", "baked_potato", "cooked_mutton", "cooked_cod", "cooked_salmon"];
 
 bot.on("health", async () => {
@@ -50,10 +109,7 @@ bot.on("health", async () => {
             try {
                 await bot.equip(food, "hand");
                 await bot.consume();
-                console.log("[Auto-Eat] Pari ate food to replenish hunger!");
-            } catch (err) {
-                // Ignore if bot is busy doing another task
-            }
+            } catch (err) {}
         }
     }
 });
@@ -62,13 +118,164 @@ bot.on("health", async () => {
 // 3. TASK FUNCTIONS
 // ---------------------------------------------------------
 
-// Stop all bot actions instantly
 function stopAllTasks() {
     isChopping = false;
     isClearing = false;
     isGuarding = false;
+    isContinuousPlacing = false;
+    if (isFishing) {
+        try { bot.activateItem(); } catch (e) {}
+        isFishing = false;
+    }
     bot.pathfinder.setGoal(null);
     bot.clearControlStates();
+}
+
+// Feature: Continuous Place (Tree Farm Sapling Auto-Replacer)
+async function holdPlaceAt(itemName, targetPos) {
+    if (isContinuousPlacing) return;
+    isContinuousPlacing = true;
+    bot.chat(`Auto-placing ${itemName} at X: ${targetPos.x}, Y: ${targetPos.y}, Z: ${targetPos.z}. Type !stop to pause.`);
+
+    // Move close to target
+    if (bot.entity.position.distanceTo(targetPos) > 3.5) {
+        bot.pathfinder.setGoal(new GoalBlock(targetPos.x, targetPos.y, targetPos.z));
+        let timeout = 0;
+        while (bot.entity.position.distanceTo(targetPos) > 3.5 && isContinuousPlacing && timeout < 40) {
+            await sleep(200);
+            timeout++;
+        }
+        bot.pathfinder.setGoal(null);
+    }
+
+    const adjacentOffsets = [vec3(0, -1, 0), vec3(0, 1, 0), vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 0, 1), vec3(0, 0, -1)];
+
+    while (isContinuousPlacing) {
+        const currentBlock = bot.blockAt(targetPos);
+
+        // Place if block space is currently air/empty
+        if (currentBlock && (currentBlock.name === "air" || currentBlock.name === "water")) {
+            const item = bot.inventory.items().find((i) => i.name.toLowerCase().includes(itemName.toLowerCase()));
+
+            if (!item) {
+                bot.chat(`Out of ${itemName}s in inventory! Pausing place mode.`);
+                isContinuousPlacing = false;
+                break;
+            }
+
+            let refBlock = null;
+            let faceVector = null;
+
+            for (const offset of adjacentOffsets) {
+                const checkPos = targetPos.plus(offset);
+                const b = bot.blockAt(checkPos);
+                if (b && b.name !== "air" && b.name !== "water" && b.name !== "lava") {
+                    refBlock = b;
+                    faceVector = vec3(-offset.x, -offset.y, -offset.z);
+                    break;
+                }
+            }
+
+            if (refBlock) {
+                try {
+                    await bot.equip(item, "hand");
+                    await bot.lookAt(refBlock.position);
+                    await bot.placeBlock(refBlock, faceVector);
+                } catch (err) {}
+            }
+        }
+        await sleep(250); // Checks 4 times per second
+    }
+}
+
+// Feature: Auto Fishing
+async function startFishing() {
+    if (isFishing) return;
+    isFishing = true;
+    bot.chat("Starting auto-fishing...");
+
+    const rod = bot.inventory.items().find(i => i.name.includes("fishing_rod"));
+    if (!rod) {
+        bot.chat("I don't have a fishing rod in my inventory!");
+        isFishing = false;
+        return;
+    }
+
+    await bot.equip(rod, "hand");
+
+    while (isFishing) {
+        try {
+            await bot.fish();
+        } catch (err) {
+            console.log("[Fish Error]:", err.message);
+            await sleep(1000);
+        }
+        await sleep(500);
+    }
+}
+
+// Feature: Deposit items to nearby chest
+async function depositItemsToChest() {
+    const chestBlock = bot.findBlock({
+        matching: (b) => b.name.includes("chest") || b.name.includes("barrel"),
+        maxDistance: 5
+    });
+
+    if (!chestBlock) return bot.chat("No chest or barrel nearby!");
+
+    try {
+        const chest = await bot.openContainer(chestBlock);
+        for (const item of bot.inventory.items()) {
+            if (!item.name.includes("sword") && !item.name.includes("axe") && !item.name.includes("helmet") && !item.name.includes("chestplate")) {
+                await chest.deposit(item.type, null, item.count);
+                await sleep(150);
+            }
+        }
+        chest.close();
+        bot.chat("Successfully deposited non-equipment items into the chest!");
+    } catch (err) {
+        bot.chat("Failed to open chest!");
+    }
+}
+
+// Feature: Place Single Block
+async function placeBlockAt(itemName, targetPos) {
+    const item = bot.inventory.items().find((i) => i.name.toLowerCase().includes(itemName.toLowerCase()));
+    if (!item) return bot.chat(`Don't have '${itemName}'!`);
+
+    const adjacentOffsets = [vec3(0, -1, 0), vec3(0, 1, 0), vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 0, 1), vec3(0, 0, -1)];
+    let refBlock = null, faceVector = null;
+
+    for (const offset of adjacentOffsets) {
+        const checkPos = targetPos.plus(offset);
+        const b = bot.blockAt(checkPos);
+        if (b && b.name !== "air" && b.name !== "water") {
+            refBlock = b;
+            faceVector = vec3(-offset.x, -offset.y, -offset.z);
+            break;
+        }
+    }
+
+    if (!refBlock) return bot.chat("No adjacent block to attach to!");
+
+    if (bot.entity.position.distanceTo(targetPos) > 4) {
+        bot.pathfinder.setGoal(new GoalBlock(targetPos.x, targetPos.y, targetPos.z));
+        let timeout = 0;
+        while (bot.entity.position.distanceTo(targetPos) > 4 && timeout < 40) {
+            await sleep(200);
+            timeout++;
+        }
+        bot.pathfinder.setGoal(null);
+    }
+
+    try {
+        await bot.equip(item, "hand");
+        await bot.lookAt(refBlock.position);
+        await bot.placeBlock(refBlock, faceVector);
+        bot.chat(`Placed ${item.name}!`);
+    } catch (err) {
+        bot.chat("Couldn't place block there!");
+    }
 }
 
 // Feature: Auto Tree Chopper
@@ -80,13 +287,9 @@ async function chopTrees() {
     const logTypes = ["oak_log", "spruce_log", "birch_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log"];
 
     while (isChopping) {
-        const logBlock = bot.findBlock({
-            matching: (block) => logTypes.includes(block.name),
-            maxDistance: 20
-        });
-
+        const logBlock = bot.findBlock({ matching: (b) => logTypes.includes(b.name), maxDistance: 20 });
         if (!logBlock) {
-            bot.chat("No more nearby tree logs found!");
+            bot.chat("No more nearby logs!");
             isChopping = false;
             break;
         }
@@ -102,18 +305,16 @@ async function chopTrees() {
             }
 
             if (!isChopping) break;
-
             bot.pathfinder.setGoal(null);
             await bot.dig(logBlock);
             await sleep(200);
         } catch (err) {
-            console.log("[Chop Error]:", err.message);
             await sleep(500);
         }
     }
 }
 
-// Feature: Cuboid Area Digging / Clearing (/fill air style)
+// Feature: Cuboid Area Clearing
 async function clearArea(p1, p2) {
     if (isClearing) return;
     isClearing = true;
@@ -122,10 +323,8 @@ async function clearArea(p1, p2) {
     const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
     const minZ = Math.min(p1.z, p2.z), maxZ = Math.max(p1.z, p2.z);
 
-    const totalBlocks = (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
-    bot.chat(`Clearing area (${totalBlocks} blocks total)... Type !stop to cancel.`);
+    bot.chat(`Clearing area... Type !stop to cancel.`);
 
-    // Clear top layer to bottom layer
     for (let y = maxY; y >= minY; y--) {
         for (let x = minX; x <= maxX; x++) {
             for (let z = minZ; z <= maxZ; z++) {
@@ -149,9 +348,7 @@ async function clearArea(p1, p2) {
                         bot.pathfinder.setGoal(null);
                         await bot.dig(block);
                         await sleep(150);
-                    } catch (err) {
-                        console.log("[Clear Error]:", err.message);
-                    }
+                    } catch (err) {}
                 }
             }
             if (!isClearing) break;
@@ -160,7 +357,7 @@ async function clearArea(p1, p2) {
     }
 
     if (isClearing) {
-        bot.chat("Finished clearing the area!");
+        bot.chat("Finished clearing!");
         isClearing = false;
     }
 }
@@ -169,42 +366,47 @@ async function clearArea(p1, p2) {
 async function guardPlayer(username) {
     if (isGuarding) return;
     isGuarding = true;
-    bot.chat(`Guarding active! Protecting ${username} from hostile mobs.`);
+    bot.chat(`Shields up! Guarding ${username}.`);
 
-    const hostiles = ["zombie", "skeleton", "spider", "creeper", "enderman", "witch", "drowned", "husk", "stray"];
+    await equipBestEquipment();
+    const hostiles = ["zombie", "skeleton", "spider", "creeper", "enderman", "witch", "drowned", "husk", "stray", "phantom"];
 
     while (isGuarding) {
-        const mob = bot.nearestEntity(e => e.type === "mob" && hostiles.includes(e.name?.toLowerCase()) && bot.entity.position.distanceTo(e.position) < 14);
+        await equipBestEquipment();
+
+        const mob = bot.nearestEntity(e => {
+            if (!e || !e.name) return false;
+            return (e.type === "mob" || e.type === "hostile") && hostiles.some(h => e.name.toLowerCase().includes(h)) && bot.entity.position.distanceTo(e.position) < 16;
+        });
 
         if (mob) {
-            bot.chat(`Attacking ${mob.name}!`);
-            const weapon = bot.inventory.items().find(i => i.name.includes("sword") || i.name.includes("axe"));
-            if (weapon) await bot.equip(weapon, "hand");
-
-            bot.pathfinder.setGoal(new GoalFollow(mob, 1));
-            while (mob.isValid && bot.entity.position.distanceTo(mob.position) < 4 && isGuarding) {
-                await bot.attack(mob);
-                await sleep(600);
+            while (mob.isValid && mob.health > 0 && bot.entity.position.distanceTo(mob.position) < 16 && isGuarding) {
+                bot.pathfinder.setGoal(new GoalFollow(mob, 1.5), true);
+                if (bot.entity.position.distanceTo(mob.position) <= 4.5) {
+                    await bot.lookAt(mob.position.offset(0, mob.height * 0.8, 0));
+                    bot.attack(mob);
+                }
+                await sleep(550);
             }
         } else {
             const owner = getPlayer(username);
             if (owner && bot.entity.position.distanceTo(owner.position) > 3) {
-                bot.pathfinder.setGoal(new GoalFollow(owner, 2));
+                bot.pathfinder.setGoal(new GoalFollow(owner, 2), true);
             }
         }
-        await sleep(1000);
+        await sleep(500);
     }
 }
 
-// Feature: Collect Items on Ground
+// Feature: Collect Ground Items
 async function collectItems() {
     const itemEntity = bot.nearestEntity(e => (e.type === "object" || e.name === "item") && bot.entity.position.distanceTo(e.position) < 15);
     if (itemEntity) {
-        bot.chat("Picking up nearby dropped items!");
+        bot.chat("Picking up items!");
         const p = itemEntity.position.floored();
         bot.pathfinder.setGoal(new GoalBlock(p.x, p.y, p.z));
     } else {
-        bot.chat("No nearby items found on ground!");
+        bot.chat("No nearby items found!");
     }
 }
 
@@ -225,32 +427,32 @@ bot.on("chat", async (username, message) => {
 
             const lower = prompt.toLowerCase();
 
-            if (lower.includes("follow me") || lower.includes("come here")) {
+            if (lower.includes("follow me")) {
                 const target = getPlayer(username);
                 if (target) {
                     stopAllTasks();
                     bot.pathfinder.setGoal(new GoalFollow(target, 2), true);
-                    bot.chat(`On my way to follow you, ${username}!`);
-                } else bot.chat("I can't see you!");
+                    bot.chat(`Following ${username}!`);
+                }
                 return;
-            } else if (lower.includes("stop") || lower.includes("cancel")) {
+            } else if (lower.includes("stop")) {
                 stopAllTasks();
                 bot.chat("Stopped all tasks!");
                 return;
-            } else if (lower.includes("chop") || lower.includes("cut tree")) {
+            } else if (lower.includes("chop")) {
                 stopAllTasks();
                 chopTrees();
                 return;
-            } else if (lower.includes("guard") || lower.includes("protect me")) {
+            } else if (lower.includes("guard") || lower.includes("protect")) {
                 stopAllTasks();
                 guardPlayer(username);
                 return;
-            } else if (lower.includes("collect") || lower.includes("pick up")) {
-                collectItems();
+            } else if (lower.includes("fish")) {
+                stopAllTasks();
+                startFishing();
                 return;
             }
 
-            // Normal Groq Llama 3 Chat
             const chatCompletion = await groq.chat.completions.create({
                 messages: [
                     { role: "system", content: "You are Pari, a friendly Minecraft companion bot. Keep replies concise and under 180 characters." },
@@ -271,15 +473,53 @@ bot.on("chat", async (username, message) => {
             return;
         }
 
-        // DIRECT MANUAL COMMANDS
+        // DIRECT COMMAND SWITCH
         switch (cmd) {
+            case "!holdplace": {
+                if (args.length === 5) {
+                    // Usage: !holdplace <item> <x> <y> <z>
+                    stopAllTasks();
+                    const itemName = args[1];
+                    const pos = vec3(parseInt(args[2]), parseInt(args[3]), parseInt(args[4]));
+                    holdPlaceAt(itemName, pos);
+                } else {
+                    bot.chat("Usage: !holdplace <item> <x> <y> <z>");
+                }
+                break;
+            }
+
+            case "!place": {
+                if (args.length === 5) {
+                    stopAllTasks();
+                    const itemName = args[1];
+                    const pos = vec3(parseInt(args[2]), parseInt(args[3]), parseInt(args[4]));
+                    placeBlockAt(itemName, pos);
+                } else if (args.length >= 2) {
+                    stopAllTasks();
+                    const itemName = args.slice(1).join("_").toLowerCase();
+                    const yaw = bot.entity.yaw;
+                    const pos = bot.entity.position.offset(-Math.sin(yaw), 0, -Math.cos(yaw)).floored();
+                    placeBlockAt(itemName, pos);
+                }
+                break;
+            }
+
+            case "!fish": {
+                stopAllTasks();
+                startFishing();
+                break;
+            }
+
+            case "!deposit": {
+                depositItemsToChest();
+                break;
+            }
+
             case "!clear":
             case "!fill": {
                 if (args.length < 7) return bot.chat("Usage: !clear <x1> <y1> <z1> <x2> <y2> <z2>");
                 stopAllTasks();
-                const p1 = vec3(parseInt(args[1]), parseInt(args[2]), parseInt(args[3]));
-                const p2 = vec3(parseInt(args[4]), parseInt(args[5]), parseInt(args[6]));
-                clearArea(p1, p2);
+                clearArea(vec3(parseInt(args[1]), parseInt(args[2]), parseInt(args[3])), vec3(parseInt(args[4]), parseInt(args[5]), parseInt(args[6])));
                 break;
             }
 
@@ -323,28 +563,10 @@ bot.on("chat", async (username, message) => {
                 break;
             }
 
-            case "!place": {
-                if (args.length < 2) return bot.chat("Usage: !place <itemName>");
-                const itemName = args.slice(1).join("_").toLowerCase();
-                const item = bot.inventory.items().find((i) => i.name.toLowerCase().includes(itemName));
-                if (!item) return bot.chat(`Don't have '${itemName}'!`);
-
-                const yaw = bot.entity.yaw;
-                const frontX = -Math.sin(yaw), frontZ = -Math.cos(yaw);
-                const sourceBlock = bot.blockAt(bot.entity.position.offset(frontX, -1, frontZ).floored());
-
-                if (sourceBlock) {
-                    await bot.equip(item, "hand");
-                    await bot.placeBlock(sourceBlock, vec3(0, 1, 0));
-                    bot.chat(`Placed ${item.name}!`);
-                }
-                break;
-            }
-
             case "!dig": {
                 if (args.length === 4) {
-                    const targetBlock = bot.blockAt(vec3(parseInt(args[1]), parseInt(args[2]), parseInt(args[3])));
-                    if (targetBlock) await bot.dig(targetBlock);
+                    const block = bot.blockAt(vec3(parseInt(args[1]), parseInt(args[2]), parseInt(args[3])));
+                    if (block) await bot.dig(block);
                 }
                 break;
             }
@@ -364,7 +586,7 @@ bot.on("chat", async (username, message) => {
             }
 
             case "!help": {
-                bot.chat("Commands: !ai, !clear, !guard, !collect, !chop, !follow, !goto, !stop, !place, !dig, !drop, !pos");
+                bot.chat("Commands: !ai, !holdplace, !place, !fish, !deposit, !clear, !guard, !collect, !chop, !follow, !goto, !stop, !pos");
                 break;
             }
         }
