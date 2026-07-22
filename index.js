@@ -1,3 +1,21 @@
+// =========================================================
+// RENDER / KOYEB WEB SERVER (Prevents Free Hosting Timeouts)
+// =========================================================
+const express = require("express");
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get("/", (req, res) => {
+    res.send("Pari Minecraft Bot is Online & Running!");
+});
+
+app.listen(PORT, () => {
+    console.log(`[Web Server] Express server listening on port ${PORT}`);
+});
+
+// =========================================================
+// MINECRAFT BOT & AI CONFIGURATION
+// =========================================================
 const mineflayer = require("mineflayer");
 const { pathfinder, Movements, goals } = require("mineflayer-pathfinder");
 const { GoalBlock, GoalFollow, GoalNear } = goals;
@@ -7,9 +25,6 @@ const vec3 = require("vec3");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const prefix = "!";
 
-// ---------------------------------------------------------
-// 1. CONFIGURATION
-// ---------------------------------------------------------
 const GROQ_API_KEY = "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";
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
@@ -17,7 +32,7 @@ const bot = mineflayer.createBot({
     host: "Shifineyy.aternos.me",
     port: 46856,
     username: "Pari",
-    skipValidation: true
+    skipValidation: true // Offline / Cracked mode
 });
 
 bot.loadPlugin(pathfinder);
@@ -25,17 +40,25 @@ bot.loadPlugin(pathfinder);
 let defaultMovements;
 let mcData;
 
-// Task States
+// Task State Controllers
 let states = {
-    chopping: false, clearing: false, guarding: false, 
-    placing: false, fishing: false, farming: false, 
-    mining: false, dancing: false, pvp: false
+    chopping: false,
+    clearing: false,
+    guarding: false,
+    placing: false,
+    fishing: false,
+    farming: false,
+    mining: false,
+    dancing: false,
+    pvp: false
 };
 
 bot.once("spawn", () => {
-    console.log(`[Bot Online] Connected as ${bot.username}! 40 Features Active.`);
+    console.log(`[Bot Online] Connected as ${bot.username}! 40+ Features Loaded.`);
     mcData = require("minecraft-data")(bot.version);
     defaultMovements = new Movements(bot, mcData);
+    
+    // Movement optimizations: Parkour, Sprinting, and Scaffolding
     defaultMovements.canDig = true;
     defaultMovements.allowParkour = true;
     defaultMovements.allowSprinting = true;
@@ -52,7 +75,7 @@ function getPlayer(username) {
 }
 
 // ---------------------------------------------------------
-// 2. PASSIVE SYSTEMS
+// PASSIVE AUTOMATIONS (EQUIP & EAT)
 // ---------------------------------------------------------
 async function equipBestEquipment() {
     const items = bot.inventory.items();
@@ -60,7 +83,9 @@ async function equipBestEquipment() {
     
     for (const name of weaponPriority) {
         const weapon = items.find(i => i.name === name);
-        if (weapon) { try { await bot.equip(weapon, "hand"); break; } catch (e) {} }
+        if (weapon) { 
+            try { await bot.equip(weapon, "hand"); break; } catch (e) {} 
+        }
     }
 
     const armorSlots = {
@@ -73,7 +98,9 @@ async function equipBestEquipment() {
     for (const [slot, priority] of Object.entries(armorSlots)) {
         for (const name of priority) {
             const armor = items.find(i => i.name === name);
-            if (armor) { try { await bot.equip(armor, slot); break; } catch (e) {} }
+            if (armor) { 
+                try { await bot.equip(armor, slot); break; } catch (e) {} 
+            }
         }
     }
 }
@@ -81,13 +108,15 @@ async function equipBestEquipment() {
 bot.on("health", async () => {
     if (bot.food < 15) {
         const food = bot.inventory.items().find(i => ["cooked_beef", "bread", "apple", "cooked_chicken", "golden_apple"].some(f => i.name.includes(f)));
-        if (food) { try { await bot.equip(food, "hand"); await bot.consume(); } catch (e) {} }
+        if (food) { 
+            try { 
+                await bot.equip(food, "hand"); 
+                await bot.consume(); 
+            } catch (e) {} 
+        }
     }
 });
 
-// ---------------------------------------------------------
-// 3. CORE FEATURES & TASKS
-// ---------------------------------------------------------
 function stopAllTasks() {
     Object.keys(states).forEach(k => states[k] = false);
     bot.pathfinder.setGoal(null);
@@ -95,6 +124,11 @@ function stopAllTasks() {
     try { bot.deactivateItem(); } catch (e) {}
 }
 
+// ---------------------------------------------------------
+// FEATURE TASKS
+// ---------------------------------------------------------
+
+// PVP Combat
 async function pvpPlayer(targetName) {
     const target = getPlayer(targetName);
     if (!target) return bot.chat(`I can't see ${targetName}!`);
@@ -116,6 +150,7 @@ async function pvpPlayer(targetName) {
     bot.chat("Combat finished.");
 }
 
+// Archery
 async function shootTarget(targetName) {
     const target = getPlayer(targetName);
     if (!target) return bot.chat("I don't see them!");
@@ -130,19 +165,20 @@ async function shootTarget(targetName) {
     await bot.lookAt(target.position.offset(0, target.height, 0));
     
     try {
-        bot.activateItem(); // Draw bow
-        await sleep(1200);  // Wait for full charge
-        bot.deactivateItem(); // Fire
+        bot.activateItem(); 
+        await sleep(1200);  
+        bot.deactivateItem(); 
     } catch (e) {}
 }
 
+// Build Wall
 async function buildWall(width, height) {
     bot.chat(`Building a ${width}x${height} wall... 🧱`);
     const blockItem = bot.inventory.items().find(i => ["dirt", "cobblestone", "stone", "planks"].some(b => i.name.includes(b)));
     if (!blockItem) return bot.chat("I need building blocks (dirt, cobble, etc.)!");
 
     await bot.equip(blockItem, "hand");
-    const startPos = bot.entity.position.floored().offset(bot.entity.yaw > 0 ? 2 : -2, 0, 0); // Roughly in front
+    const startPos = bot.entity.position.floored().offset(bot.entity.yaw > 0 ? 2 : -2, 0, 0);
 
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
@@ -160,14 +196,126 @@ async function buildWall(width, height) {
     bot.chat("Wall complete!");
 }
 
-// ... (Keeping farm, mine, fish, guard from previous version for brevity - they remain fully active!)
-async function startFishing() { if (states.fishing) return; states.fishing = true; const rod = bot.inventory.items().find(i => i.name.includes("fishing_rod")); if (!rod) return bot.chat("I need a fishing rod!"); await bot.equip(rod, "hand"); bot.chat("Casting my line! 🎣"); while (states.fishing) { try { await bot.fish(); } catch (err) { await sleep(1000); } await sleep(500); } }
-async function autoFarm() { if (states.farming) return; states.farming = true; bot.chat("Starting farm mode! 🌾"); while (states.farming) { const crop = bot.findBlock({ matching: (b) => ["wheat", "carrots", "potatoes"].includes(b.name) && b.metadata === 7, maxDistance: 15 }); if (!crop) break; bot.pathfinder.setGoal(new GoalBlock(crop.position.x, crop.position.y, crop.position.z)); await sleep(1500); try { await bot.dig(crop); const seedName = crop.name === "wheat" ? "wheat_seeds" : crop.name; const seed = bot.inventory.items().find(i => i.name === seedName); if (seed) { await bot.equip(seed, "hand"); await bot.placeBlock(bot.blockAt(crop.position.offset(0, -1, 0)), vec3(0, 1, 0)); } } catch (e) {} await sleep(500); } states.farming = false; }
-async function mineBlockType(blockName) { if (states.mining) return; states.mining = true; bot.chat(`Looking for ${blockName}... ⛏️`); while (states.mining) { const target = bot.findBlock({ matching: (b) => b.name.includes(blockName), maxDistance: 32 }); if (!target) break; try { bot.pathfinder.setGoal(new GoalBlock(target.position.x, target.position.y, target.position.z)); await sleep(2000); await bot.dig(target); } catch (e) {} await sleep(500); } states.mining = false; }
-async function guardPlayer(username) { if (states.guarding) return; states.guarding = true; bot.chat(`Guarding ${username}! 🛡️`); await equipBestEquipment(); const hostiles = ["zombie", "skeleton", "spider", "creeper", "enderman"]; while (states.guarding) { await equipBestEquipment(); const mob = bot.nearestEntity(e => (e.type === "mob" || e.type === "hostile") && hostiles.some(h => e.name?.toLowerCase().includes(h)) && bot.entity.position.distanceTo(e.position) < 16); if (mob) { while (mob.isValid && mob.health > 0 && bot.entity.position.distanceTo(mob.position) < 16 && states.guarding) { bot.pathfinder.setGoal(new GoalFollow(mob, 1.5), true); if (bot.entity.position.distanceTo(mob.position) <= 4.5) { await bot.lookAt(mob.position.offset(0, mob.height * 0.8, 0)); bot.attack(mob); } await sleep(550); } } else { const owner = getPlayer(username); if (owner && bot.entity.position.distanceTo(owner.position) > 3) bot.pathfinder.setGoal(new GoalFollow(owner, 2), true); } await sleep(500); } }
+// Fishing
+async function startFishing() { 
+    if (states.fishing) return; 
+    states.fishing = true; 
+    const rod = bot.inventory.items().find(i => i.name.includes("fishing_rod")); 
+    if (!rod) return bot.chat("I need a fishing rod!"); 
+    await bot.equip(rod, "hand"); 
+    bot.chat("Casting my line! 🎣"); 
+    while (states.fishing) { 
+        try { await bot.fish(); } catch (err) { await sleep(1000); } 
+        await sleep(500); 
+    } 
+}
+
+// Farming
+async function autoFarm() { 
+    if (states.farming) return; 
+    states.farming = true; 
+    bot.chat("Starting farm mode! 🌾"); 
+    while (states.farming) { 
+        const crop = bot.findBlock({ matching: (b) => ["wheat", "carrots", "potatoes"].includes(b.name) && b.metadata === 7, maxDistance: 15 }); 
+        if (!crop) break; 
+        bot.pathfinder.setGoal(new GoalBlock(crop.position.x, crop.position.y, crop.position.z)); 
+        await sleep(1500); 
+        try { 
+            await bot.dig(crop); 
+            const seedName = crop.name === "wheat" ? "wheat_seeds" : crop.name; 
+            const seed = bot.inventory.items().find(i => i.name === seedName); 
+            if (seed) { 
+                await bot.equip(seed, "hand"); 
+                await bot.placeBlock(bot.blockAt(crop.position.offset(0, -1, 0)), vec3(0, 1, 0)); 
+            } 
+        } catch (e) {} 
+        await sleep(500); 
+    } 
+    states.farming = false; 
+}
+
+// Mining
+async function mineBlockType(blockName) { 
+    if (states.mining) return; 
+    states.mining = true; 
+    bot.chat(`Looking for ${blockName}... ⛏️`); 
+    while (states.mining) { 
+        const target = bot.findBlock({ matching: (b) => b.name.includes(blockName), maxDistance: 32 }); 
+        if (!target) break; 
+        try { 
+            bot.pathfinder.setGoal(new GoalBlock(target.position.x, target.position.y, target.position.z)); 
+            await sleep(2000); 
+            await bot.dig(target); 
+        } catch (e) {} 
+        await sleep(500); 
+    } 
+    states.mining = false; 
+}
+
+// Bodyguard
+async function guardPlayer(username) { 
+    if (states.guarding) return; 
+    states.guarding = true; 
+    bot.chat(`Guarding ${username}! 🛡️`); 
+    await equipBestEquipment(); 
+    const hostiles = ["zombie", "skeleton", "spider", "creeper", "enderman"]; 
+    while (states.guarding) { 
+        await equipBestEquipment(); 
+        const mob = bot.nearestEntity(e => (e.type === "mob" || e.type === "hostile") && hostiles.some(h => e.name?.toLowerCase().includes(h)) && bot.entity.position.distanceTo(e.position) < 16); 
+        if (mob) { 
+            while (mob.isValid && mob.health > 0 && bot.entity.position.distanceTo(mob.position) < 16 && states.guarding) { 
+                bot.pathfinder.setGoal(new GoalFollow(mob, 1.5), true); 
+                if (bot.entity.position.distanceTo(mob.position) <= 4.5) { 
+                    await bot.lookAt(mob.position.offset(0, mob.height * 0.8, 0)); 
+                    bot.attack(mob); 
+                } 
+                await sleep(550); 
+            } 
+        } else { 
+            const owner = getPlayer(username); 
+            if (owner && bot.entity.position.distanceTo(owner.position) > 3) bot.pathfinder.setGoal(new GoalFollow(owner, 2), true); 
+        } 
+        await sleep(500); 
+    } 
+}
+
+// Continuous Placement (Tree Farm Replacer)
+async function holdPlaceAt(itemName, targetPos) {
+    if (states.placing) return;
+    states.placing = true;
+    bot.chat(`Auto-placing ${itemName}... Type !stop to pause.`);
+
+    const adjacentOffsets = [vec3(0, -1, 0), vec3(0, 1, 0), vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 0, 1), vec3(0, 0, -1)];
+
+    while (states.placing) {
+        const currentBlock = bot.blockAt(targetPos);
+        if (currentBlock && (currentBlock.name === "air" || currentBlock.name === "water")) {
+            const item = bot.inventory.items().find((i) => i.name.toLowerCase().includes(itemName.toLowerCase()));
+            if (!item) {
+                bot.chat(`Out of ${itemName}s!`);
+                states.placing = false;
+                break;
+            }
+
+            for (const offset of adjacentOffsets) {
+                const checkPos = targetPos.plus(offset);
+                const b = bot.blockAt(checkPos);
+                if (b && b.name !== "air" && b.name !== "water") {
+                    try {
+                        await bot.equip(item, "hand");
+                        await bot.lookAt(b.position);
+                        await bot.placeBlock(b, vec3(-offset.x, -offset.y, -offset.z));
+                    } catch (err) {}
+                    break;
+                }
+            }
+        }
+        await sleep(250);
+    }
+}
 
 // ---------------------------------------------------------
-// 4. CHAT & COMMAND PARSER
+// CHAT & COMMAND HANDLER
 // ---------------------------------------------------------
 bot.on("chat", async (username, message) => {
     if (username === bot.username) return;
@@ -175,26 +323,22 @@ bot.on("chat", async (username, message) => {
     const cmd = args[0].toLowerCase();
 
     try {
-        // ==========================================
         // AI COMMAND HANDLER
-        // ==========================================
         if (cmd === "!ai" || cmd === "!chat") {
             const prompt = args.slice(1).join(" ").trim();
             if (!prompt) return bot.chat("Ask me questions or tell me to do tasks!");
             const lower = prompt.toLowerCase();
 
-            // AI Action Intents
             if (lower.includes("follow")) { stopAllTasks(); bot.pathfinder.setGoal(new GoalFollow(getPlayer(username), 2), true); return bot.chat("Following!"); }
             if (lower.includes("stop")) { stopAllTasks(); return bot.chat("Stopped!"); }
             if (lower.includes("guard") || lower.includes("protect")) { stopAllTasks(); guardPlayer(username); return; }
             if (lower.includes("fish")) { stopAllTasks(); startFishing(); return; }
             if (lower.includes("farm")) { stopAllTasks(); autoFarm(); return; }
-            if (lower.includes("time")) { return bot.chat(`It is currently ${bot.time.isDay ? "Day" : "Night"} time!`); }
+            if (lower.includes("time")) { return bot.chat(`It is currently ${bot.time.isDay ? "Day ☀️" : "Night 🌙"}!`); }
 
-            // Normal AI Chat Reply
             const chatCompletion = await groq.chat.completions.create({
                 messages: [
-                    { role: "system", content: "You are Pari, a friendly, hyper-capable Minecraft bot. Keep replies under 180 chars." },
+                    { role: "system", content: "You are Pari, a friendly Minecraft companion bot. Keep replies under 180 chars." },
                     { role: "user", content: `${username} asks: ${prompt}` }
                 ],
                 model: "llama-3.1-8b-instant"
@@ -205,31 +349,28 @@ bot.on("chat", async (username, message) => {
             return;
         }
 
-        // ==========================================
         // DIRECT MANUAL COMMANDS
-        // ==========================================
         switch (cmd) {
-            // PVP & Combat
             case "!pvp": stopAllTasks(); pvpPlayer(args[1]); break;
             case "!shoot": shootTarget(args[1]); break;
             case "!guard": stopAllTasks(); guardPlayer(username); break;
-
-            // Building & Automation
             case "!buildwall": stopAllTasks(); buildWall(parseInt(args[1] || 3), parseInt(args[2] || 3)); break;
             case "!farm": stopAllTasks(); autoFarm(); break;
             case "!mine": stopAllTasks(); mineBlockType(args[1] || "stone"); break;
             case "!fish": stopAllTasks(); startFishing(); break;
-
-            // World Info
+            case "!holdplace": 
+                if (args.length === 5) {
+                    stopAllTasks();
+                    holdPlaceAt(args[1], vec3(parseInt(args[2]), parseInt(args[3]), parseInt(args[4])));
+                }
+                break;
             case "!time": bot.chat(`Time: ${bot.time.timeOfDay} ticks. It is ${bot.time.isDay ? "Day ☀️" : "Night 🌙"}`); break;
-            case "!weather": bot.chat(bot.isRaining ? "It's raining! 🌧️" : "The weather is clear! ☀️"); break;
+            case "!weather": bot.chat(bot.isRaining ? "It's raining! 🌧️" : "Clear skies! ☀️"); break;
             case "!pos": bot.chat(`X: ${Math.floor(bot.entity.position.x)}, Y: ${Math.floor(bot.entity.position.y)}, Z: ${Math.floor(bot.entity.position.z)}`); break;
             case "!inspect": 
                 const block = bot.blockAtCursor(5);
-                bot.chat(block ? `I am looking at: ${block.name}` : "I'm not looking at any blocks nearby.");
+                bot.chat(block ? `Looking at: ${block.name}` : "Not looking at any blocks nearby.");
                 break;
-
-            // Inventory & Items
             case "!equip": 
                 const eqItem = bot.inventory.items().find(i => i.name.includes(args[1]?.toLowerCase()));
                 if (eqItem) { await bot.equip(eqItem, "hand"); bot.chat(`Equipped ${eqItem.name}!`); }
@@ -255,15 +396,13 @@ bot.on("chat", async (username, message) => {
                 break;
             case "!inv": 
                 const items = bot.inventory.items().map(i => `${i.count}x ${i.name}`).slice(0, 5).join(", ");
-                bot.chat(items ? `Inventory: ${items}` : "My inventory is empty!");
+                bot.chat(items ? `Inventory: ${items}` : "Inventory is empty!");
                 break;
             case "!eat": 
                 const food = bot.inventory.items().find(i => i.name.includes("apple") || i.name.includes("beef") || i.name.includes("bread"));
                 if (food) { await bot.equip(food, "hand"); await bot.consume(); bot.chat("Yum!"); }
                 break;
             case "!health": bot.chat(`Health: ${Math.round(bot.health)}/20 | Food: ${Math.round(bot.food)}/20`); break;
-
-            // Movement & Emotes
             case "!follow": stopAllTasks(); bot.pathfinder.setGoal(new GoalFollow(getPlayer(args[1] || username), 2), true); break;
             case "!goto": stopAllTasks(); bot.pathfinder.setGoal(new GoalBlock(parseInt(args[1]), parseInt(args[2]), parseInt(args[3]))); break;
             case "!mount":
@@ -288,11 +427,9 @@ bot.on("chat", async (username, message) => {
                 const targetL = getPlayer(args[1] || username);
                 if (targetL) await bot.lookAt(targetL.position.offset(0, targetL.height, 0));
                 break;
-            
-            // Utilities
             case "!say": bot.chat(args.slice(1).join(" ")); break;
             case "!stop": stopAllTasks(); bot.chat("Stopped all tasks."); break;
-            case "!help": bot.chat("Too many commands to list! Check the GitHub chart for all 40 commands."); break;
+            case "!help": bot.chat("Commands: !ai, !pvp, !shoot, !guard, !farm, !mine, !fish, !holdplace, !buildwall, !follow, !goto, !stop, !inv, !pos, !say"); break;
         }
     } catch (err) {
         console.error("[Bot Error]:", err.message);
