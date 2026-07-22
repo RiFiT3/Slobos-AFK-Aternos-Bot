@@ -12,7 +12,7 @@ const bot = mineflayer.createBot({
     host: "Shifineyy.aternos.me",
     port: 46856,
     username: "consistentMiner",
-    skipValidation: true
+    skipValidation: true // Offline / Cracked mode setting
 });
 
 // Recursive loop for digging
@@ -21,67 +21,67 @@ async function dig() {
 
     const block = bot.blockAtCursor(4);
 
-    if (!block) {
+    if (!block || block.name === "air") {
         await sleep(100);
     } else {
         try {
             await bot.dig(block, "ignore", "raycast");
-        } catch (err) {}
+        } catch (err) {
+            // Ignore minor digging interruptions
+        }
     }
     
     await sleep(100);
     if (isDigging) dig();
 }
 
-// ---------------------------------------------------------
-// NEW & IMPROVED PLACING LOGIC
-// ---------------------------------------------------------
+// Continuous placement loop based on video implementation
 async function place() {
     if (!isPlacing) return;
 
     try {
-        const formattedTarget = placingItemName.toLowerCase().replace(/\s+/g, "_");
+        // Format input (e.g., "dark oak sapling" -> "dark_oak_sapling")
+        const formattedTarget = placingItemName.toLowerCase().trim().replace(/\s+/g, "_");
 
-        // 1. Find item
-        const item = bot.inventory.items().find((i) => i.name.toLowerCase().includes(formattedTarget));
+        // 1. Find the item in the bot's inventory
+        const item = bot.inventory.items().find((i) => {
+            const name = i.name.toLowerCase();
+            return name.includes(formattedTarget) || formattedTarget.includes(name);
+        });
 
         if (!item) {
-            bot.chat(`I don't have ${placingItemName} anymore! Stopping.`);
+            bot.chat(`I ran out of ${placingItemName}! Stopping placement.`);
+            console.log(`[Bot] Inventory check: Out of ${placingItemName}`);
             isPlacing = false;
             return;
         }
 
-        // 2. Equip item safely
-        if (!bot.heldItem || bot.heldItem.name !== item.name) {
+        // 2. Equip item to main hand (must await as shown in tutorial)
+        if (!bot.heldItem || bot.heldItem.type !== item.type) {
             await bot.equip(item, "hand");
-            await sleep(250); // Mandatory wait for server to register equip
+            await sleep(200); // Wait for equipment packet sync
         }
 
-        // 3. Find block in front of the bot
-        const targetBlock = bot.blockAtCursor(4);
+        // 3. Find the reference block the bot is looking at (raycast up to 4 blocks)
+        const referenceBlock = bot.blockAtCursor(4);
 
-        if (targetBlock && targetBlock.name !== "air") {
-            
-            // 4. Force the bot to look directly at the center of the block to satisfy server Anti-Cheat
-            const centerPosition = targetBlock.position.offset(0.5, 0.5, 0.5);
-            await bot.lookAt(centerPosition, true);
-            await sleep(50); // Tiny pause to let the head turn
-
-            // 5. Place the block on the TOP face (vec3 0,1,0) of the target block
-            // This means if you look at a dirt block, it plants the sapling ON TOP of it.
-            await bot.placeBlock(targetBlock, new vec3(0, 1, 0));
-            
-            // 6. Swing arm to make it look like a real player clicking
-            bot.swingArm('right');
+        if (referenceBlock && referenceBlock.name !== "air") {
+            // 4. Place the item onto the top face of the reference block (vec3(0, 1, 0))
+            const topFaceVector = new vec3(0, 1, 0);
+            await bot.placeBlock(referenceBlock, topFaceVector);
+        } else {
+            console.log("[Bot] No solid block found in line of sight to place onto.");
         }
 
     } catch (err) {
-        // If it fails, print the exact reason to your terminal!
-        console.log(`[Placing Block Failed]: ${err.message}`);
+        // Output errors to console for troubleshooting
+        if (err.message && !err.message.includes("Cancelled")) {
+            console.log(`[Placement Error]: ${err.message}`);
+        }
     }
 
-    // Wait half a second between placements so the server doesn't kick for spamming
-    await sleep(500);
+    // Short pause between placements to prevent server spam kicks
+    await sleep(300);
 
     if (isPlacing) place();
 }
@@ -100,8 +100,10 @@ function equipItem(itemName) {
 }
 
 bot.on("spawn", () => {
-    console.log(`Bot has spawned in the server! Type commands in chat.`);
+    console.log("[Bot] Connected and ready!");
 });
+
+bot.on("messagestr", (message) => console.log(message));
 
 bot.on("chat", async (username, message) => {
     if (username === bot.username) return;
