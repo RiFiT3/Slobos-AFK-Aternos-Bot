@@ -8,12 +8,12 @@ var isDigging = false;
 var isPlacing = false;
 var placingItemName = "";
 
+// Offline / Unverified Bot Configuration
 const bot = mineflayer.createBot({
     host: "Shifineyy.aternos.me",
     port: 46856,
-    username: "consistentMiner",
-    // auth: "microsoft", // Uncomment if logging into an online-mode / Microsoft account
-    skipValidation: true,
+    username: "consistentMiner", // You can change this to any custom bot name
+    skipValidation: true
 });
 
 // Recursive loop for digging
@@ -59,7 +59,6 @@ async function place() {
             // Place on top face of target block (vec3(0, 1, 0))
             await bot.placeBlock(block, vec3(0, 1, 0));
         } catch (err) {
-            // Small pause if placement fails (e.g., target block obstructed)
             await sleep(100);
         }
     }
@@ -134,4 +133,3 @@ bot.on("chat", async (username, message) => {
 
 bot.on("kicked", console.log);
 bot.on("error", console.log);
-
