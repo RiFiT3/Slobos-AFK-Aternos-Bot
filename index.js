@@ -15,30 +15,42 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var isPlacing = false;
 var placingItemName = "";
 
-// Placement function styled directly from your example code
+// Helper function to get the block directly 1 step IN FRONT of the bot's feet
+function getBlockInFront() {
+    const yaw = bot.entity.yaw;
+    // Calculate 1 block forward in the direction the bot is facing
+    const frontX = -Math.sin(yaw);
+    const frontZ = -Math.cos(yaw);
+
+    // Block 1 step ahead and 1 block down (the ground block in front)
+    const frontPosition = bot.entity.position.offset(frontX, -1, frontZ).floored();
+    return bot.blockAt(frontPosition);
+}
+
 async function placeOnBlock() {
     if (!isPlacing) return;
 
     try {
-        // 1. Get the source block in front of the bot (or find nearby dirt/grass)
+        // 1. Get block at crosshair first
         let sourceBlock = bot.blockAtCursor(4);
 
-        if (!sourceBlock || sourceBlock.name === "air") {
-            // Fallback: search for nearby dirt/grass blocks within 4 blocks
-            sourceBlock = bot.findBlock({
-                matching: (b) => b.name === "dirt" || b.name === "grass_block" || b.name === "coarse_dirt",
-                maxDistance: 4,
-            });
+        // Position of the block directly under the bot's feet
+        const feetBlockPos = bot.entity.position.offset(0, -1, 0).floored();
+
+        // 2. If no block is targeted, or if it accidentally targeted the floor under its feet, target the block IN FRONT instead
+        if (!sourceBlock || sourceBlock.name === "air" || sourceBlock.position.equals(feetBlockPos)) {
+            sourceBlock = getBlockInFront();
         }
 
-        if (!sourceBlock) {
-            console.log("No valid block found to place on!");
-            await sleep(500);
+        // Check if a valid block in front exists
+        if (!sourceBlock || sourceBlock.name === "air") {
+            console.log("No solid block found in front to place on!");
+            await sleep(400);
             if (isPlacing) placeOnBlock();
             return;
         }
 
-        // 2. Find the requested item in inventory
+        // 3. Find item in inventory
         const formattedItem = placingItemName.toLowerCase().replace(/\s+/g, "_");
         const item = bot.inventory.items().find((i) => i.name.toLowerCase().includes(formattedItem));
 
@@ -48,31 +60,31 @@ async function placeOnBlock() {
             return;
         }
 
-        // 3. Equip the item to hand
+        // 4. Equip item to main hand
         await bot.equip(item, "hand");
 
-        // 4. Define top face vector {x:0, y:1, z:0} as shown in the tutorial
-        let faceVector = vec3(0, 1, 0);
-
-        // 5. Place the block/sapling on top of the source block
+        // 5. Place on top face of the block IN FRONT (vec3 0,1,0)
+        const faceVector = new vec3(0, 1, 0);
         await bot.placeBlock(sourceBlock, faceVector);
 
     } catch (err) {
-        console.log("[Place Error]:", err.message);
+        // Ignore minor placement errors if already placed
+        if (err.message && !err.message.includes("Cancelled")) {
+            console.log("[Place Error]:", err.message);
+        }
     }
 
-    await sleep(400); // Small pause to prevent server spam
+    await sleep(350); // Pause between placements
     if (isPlacing) placeOnBlock();
 }
 
 bot.on("spawn", () => {
-    console.log("Bot has joined Shifineyy.aternos.me!");
+    console.log("Bot connected and ready!");
 });
 
 bot.on("chat", async (username, message) => {
     if (username === bot.username) return;
 
-    // Commands: !use oak sapling, !use dirt, !use stop
     if (message.startsWith("!use") || message.startsWith("!place")) {
         let args = message.split(" ").slice(1);
         let input = args.join(" ").replace("item ", "").trim().toLowerCase();
@@ -85,7 +97,7 @@ bot.on("chat", async (username, message) => {
 
         placingItemName = input;
         isPlacing = true;
-        bot.chat(`Starting to place ${placingItemName}...`);
+        bot.chat(`Started placing ${placingItemName} in front!`);
         placeOnBlock();
     }
 });
