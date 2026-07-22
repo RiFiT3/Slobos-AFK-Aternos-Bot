@@ -27,7 +27,7 @@ async function dig() {
         try {
             await bot.dig(block, "ignore", "raycast");
         } catch (err) {
-            // Ignore minor digging interruptions
+            // Ignore minor digging interrupts
         }
     }
     
@@ -35,48 +35,57 @@ async function dig() {
     if (isDigging) dig();
 }
 
-// Fixed recursive loop for placing blocks/saplings
+// Fixed continuous placement loop (simulates Right-Click key)
 async function place() {
     if (!isPlacing) return;
 
     try {
-        // Format input name for Minecraft internal IDs (e.g. "dark oak sapling" -> "dark_oak_sapling")
-        const formattedTarget = placingItemName.toLowerCase().replace(/\s+/g, "_");
+        // Format input (e.g. "dark oak sapling" -> "dark_oak_sapling")
+        const formattedTarget = placingItemName.toLowerCase().trim().replace(/\s+/g, "_");
 
-        // 1. Find the item in the inventory
+        // 1. Find item in inventory
         const item = bot.inventory.items().find((i) => {
-            const itemName = i.name.toLowerCase();
-            return itemName.includes(formattedTarget) || formattedTarget.includes(itemName);
+            const name = i.name.toLowerCase();
+            return name.includes(formattedTarget) || formattedTarget.includes(name);
         });
 
         if (!item) {
-            bot.chat(`I don't have any ${placingItemName} in my inventory! Stopping.`);
+            bot.chat(`I ran out of ${placingItemName}! Stopping.`);
             console.log(`[Bot] Out of item: ${placingItemName}`);
             isPlacing = false;
             return;
         }
 
-        // 2. Equip only if not already held in hand
+        // 2. Equip item to main hand if not already holding it
         if (!bot.heldItem || bot.heldItem.type !== item.type) {
             await bot.equip(item, "hand");
-            await sleep(150); // Small pause for equipment sync
+            await sleep(200); // Give server a moment to register item equip
         }
 
-        // 3. Find target block at cursor
+        // 3. Find target block the bot is looking at (up to 4 blocks away)
         const targetBlock = bot.blockAtCursor(4);
 
-        if (targetBlock && targetBlock.type !== 0) { // Ensure target block exists and isn't air
-            // Place against top face of the block (0, 1, 0)
-            await bot.placeBlock(targetBlock, vec3(0, 1, 0));
+        if (targetBlock && targetBlock.type !== 0) {
+            // Right-click the targeted block with held item (places block / plants sapling)
+            try {
+                await bot.activateBlock(targetBlock);
+            } catch (e) {
+                // Fallback to placeBlock if activateBlock encounters an edge case
+                await bot.placeBlock(targetBlock, vec3(0, 1, 0));
+            }
+        } else {
+            // If looking at air, attempt to activate the item in hand
+            await bot.activateItem();
         }
+
     } catch (err) {
-        // Log placement errors to terminal to help debug positioning issues
+        // Print errors to terminal console for debugging
         if (err.message && !err.message.includes("Cancelled")) {
-            console.log(`[Placement Error]: ${err.message}`);
+            console.log(`[Place Error]: ${err.message}`);
         }
     }
 
-    // Pause between placement attempts to prevent server spam
+    // Delay between placements (250ms prevents server anti-cheat/spam kicks)
     await sleep(250);
 
     if (isPlacing) place();
@@ -147,4 +156,3 @@ bot.on("chat", async (username, message) => {
 
 bot.on("kicked", console.log);
 bot.on("error", console.log);
-
